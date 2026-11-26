@@ -852,10 +852,11 @@ def _smooth_resample_track(tx, ty, n_pts=800):
         sx, sy = [], []
         steps = max(4, min(12, 700 // max(1, N)))
         for i in range(N):
-            p0x, p0y = x[(i-1)%N], y[(i-1)%N]
+            i0 = divmod(i-1, N)[1]; i2 = divmod(i+1, N)[1]; i3 = divmod(i+2, N)[1]
+            p0x, p0y = x[i0], y[i0]
             p1x, p1y = x[i], y[i]
-            p2x, p2y = x[(i+1)%N], y[(i+1)%N]
-            p3x, p3y = x[(i+2)%N], y[(i+2)%N]
+            p2x, p2y = x[i2], y[i2]
+            p3x, p3y = x[i3], y[i3]
             for st in range(steps):
                 t = st / float(steps); t2 = t*t; t3 = t2*t
                 cx = 0.5*((2*p1x)+(-p0x+p2x)*t+(2*p0x-5*p1x+4*p2x-p3x)*t2+(-p0x+3*p1x-3*p2x+p3x)*t3)
@@ -878,8 +879,9 @@ def _detect_corners(tx, ty):
     w = max(4, N // 80)
     ang = np.zeros(N)
     for i in range(N):
-        dx1, dy1 = x[i] - x[(i-w)%N], y[i] - y[(i-w)%N]
-        dx2, dy2 = x[(i+w)%N] - x[i], y[(i+w)%N] - y[i]
+        iw1 = divmod(i-w, N)[1]; iw2 = divmod(i+w, N)[1]
+        dx1, dy1 = x[i] - x[iw1], y[i] - y[iw1]
+        dx2, dy2 = x[iw2] - x[i], y[iw2] - y[i]
         n1, n2 = math.hypot(dx1, dy1), math.hypot(dx2, dy2)
         if n1 > 0 and n2 > 0:
             c = max(-1.0, min(1.0, (dx1*dx2 + dy1*dy2)/(n1*n2)))
@@ -887,7 +889,7 @@ def _detect_corners(tx, ty):
     corners = []; last_i = -999; min_gap = N // 28
     for i in range(N):
         if ang[i] > 16.0 and i - last_i >= min_gap:
-            loc = [ang[(i+k)%N] for k in range(-w, w+1)]
+            loc = [ang[divmod(i+k, N)[1]] for k in range(-w, w+1)]
             if ang[i] >= max(loc):
                 corners.append({'num': len(corners)+1, 'letter': '', 'x': round(float(x[i]),1), 'y': round(float(y[i]),1)})
                 last_i = i
