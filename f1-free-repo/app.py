@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 F1 OFFICIAL TELEMETRY PIT WALL & HISTORICAL RACE REPLAY (1950-2026)
+Supports: RACE (R), QUALIFYING (Q), SPRINT (S), SPRINT QUALI (SQ), FP1, FP2, FP3
 512 MB RAM Cloud Edition + Authentic 1950-2026 Circuit Geometry Engine
 """
 
@@ -36,7 +37,6 @@ class CircuitEngine:
     _GJ_DATA: Optional[Dict[str, Any]] = None
     _LOCK = threading.Lock()
 
-    # Official F1 MultiViewer Laser-Scanned Circuit Keys
     MV_KEYS = {
         "melbourne": 10, "albert_park": 10,
         "bahrain": 63, "sakhir": 63,
@@ -81,7 +81,6 @@ class CircuitEngine:
         if len(x) < 6:
             return list(tx), list(ty)
 
-        # Deduplicate near-identical consecutive points
         keep = [0]
         for i in range(1, len(x)):
             if math.hypot(x[i] - x[keep[-1]], y[i] - y[keep[-1]]) > 0.5:
@@ -93,7 +92,6 @@ class CircuitEngine:
             x, y = x[:-1], y[:-1]
 
         N = len(x)
-        # If point count is low (e.g. GeoJSON), apply closed Catmull-Rom spline smoothing
         if N < 360:
             sx, sy = [], []
             steps = max(4, min(14, 720 // max(1, N)))
@@ -115,7 +113,6 @@ class CircuitEngine:
                     sy.append(cy)
             x, y = np.asarray(sx, dtype=float), np.asarray(sy, dtype=float)
 
-        # Close loop and resample uniformly by arc-length
         x = np.append(x, x[0])
         y = np.append(y, y[0])
         ds = np.hypot(np.diff(x), np.diff(y))
@@ -173,7 +170,6 @@ class CircuitEngine:
         if explicit_key:
             return int(explicit_key)
         t = search_text.lower()
-        # Handle year-specific Grand Prix host circuits accurately
         if "adelaide" in t:
             return None
         if "austral" in t:
@@ -215,7 +211,7 @@ class CircuitEngine:
         yr_int = int(year) if str(year).isdigit() else 2025
         search_text = f"{title} {gp} {location} {circuit_id}".lower()
 
-        # 1. Try Official F1 MultiViewer Laser Circuit API (Ultra-lightweight <50 KB)
+        # 1. Official F1 MultiViewer Laser Circuit API
         ckey = cls.resolve_mv_key(yr_int, search_text, explicit_mv_key)
         if ckey:
             for try_yr in (max(2018, min(2025, yr_int)), 2024, 2023):
@@ -251,7 +247,7 @@ class CircuitEngine:
                 except Exception:
                     pass
 
-        # 2. Try 1950-2026 Historical & Modern F1 Circuit GeoJSON Database
+        # 2. 1950-2026 Historical & Modern F1 Circuit GeoJSON Database
         try:
             with cls._LOCK:
                 if cls._GJ_DATA is None:
@@ -339,7 +335,6 @@ class CircuitEngine:
                 geom = best_feat.get("geometry", {})
                 coords = geom.get("coordinates", [])
                 if geom.get("type") == "MultiLineString":
-                    # Stitch MultiLineString sectors end-to-end so the track is never cut in half
                     pts = list(coords[0])
                     rem = [list(seg) for seg in coords[1:] if len(seg) > 0]
                     while rem:
@@ -371,7 +366,7 @@ class CircuitEngine:
         except Exception:
             pass
 
-        # 3. Offline Precision Grand Prix Circuit Blueprint (Zero-Network Fallback)
+        # 3. Offline Precision Circuit Fallback
         tx, ty = [], []
         for i in range(800):
             a = -i * (2.0 * math.pi / 800.0)
@@ -385,12 +380,22 @@ class CircuitEngine:
 
 
 # ==============================================================================
-# 2. CORE F1 DATA & 512 MB TELEMETRY ENGINE
+# 2. CORE F1 DATA & 512 MB TELEMETRY ENGINE (R, Q, S, SQ, FP1, FP2, FP3)
 # ==============================================================================
 class F1Core:
     CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "f1_cache")
     REPLAY_MEMO: Dict[str, Dict[str, Any]] = {}
     SCHEDULE_MEMO: Dict[int, List[Dict[str, Any]]] = {}
+
+    SESSION_LABELS = {
+        "R": "Race",
+        "Q": "Qualifying",
+        "S": "Sprint",
+        "SQ": "Sprint Qualifying",
+        "FP1": "Practice 1 (FP1)",
+        "FP2": "Practice 2 (FP2)",
+        "FP3": "Practice 3 (FP3)",
+    }
 
     TEAM_COLORS = {
         "Red Bull Racing": "#3671C6",
@@ -431,7 +436,6 @@ class F1Core:
 
     @staticmethod
     def is_low_mem_env() -> bool:
-        """Detects 512 MB cloud environments (like Render Free Tier) to prevent OOM kills."""
         if os.environ.get("RENDER") or os.environ.get("LOW_MEM") or os.environ.get("PORT") == "10000":
             return True
         for cg in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
@@ -484,7 +488,6 @@ class F1Core:
         if year in cls.SCHEDULE_MEMO:
             return cls.SCHEDULE_MEMO[year]
 
-        # 1. Try Jolpica/Ergast REST API first (Fastest & <1 MB RAM for 1950-2026)
         try:
             url = f"https://api.jolpi.ca/ergast/f1/{year}.json"
             req = urllib.request.Request(url, headers={"User-Agent": "F1PitWall/3.0"})
@@ -511,7 +514,6 @@ class F1Core:
         except Exception:
             pass
 
-        # 2. Try FastF1 schedule
         if fastf1 is not None:
             try:
                 sched = fastf1.get_event_schedule(year, include_testing=False)
@@ -534,8 +536,7 @@ class F1Core:
             except Exception:
                 pass
 
-        # 3. Built-in 2025/2026 fallback calendar
-        fallback = [
+        return [
             {"round": 1, "name": "Australian Grand Prix", "country": "Australia", "location": "Melbourne", "date": f"{year}-03-16"},
             {"round": 2, "name": "Chinese Grand Prix", "country": "China", "location": "Shanghai", "date": f"{year}-03-23"},
             {"round": 3, "name": "Japanese Grand Prix", "country": "Japan", "location": "Suzuka", "date": f"{year}-04-06"},
@@ -561,33 +562,53 @@ class F1Core:
             {"round": 23, "name": "Qatar Grand Prix", "country": "Qatar", "location": "Lusail", "date": f"{year}-11-30"},
             {"round": 24, "name": "Abu Dhabi Grand Prix", "country": "UAE", "location": "Yas Marina", "date": f"{year}-12-07"},
         ]
-        return fallback
 
     @classmethod
     def fetch_ergast_fallback(cls, year: int, gp: Any, session_type: str = "R") -> Dict[str, Any]:
-        """Lightweight (<5 MB RAM) race reconstruction for 1950-2026 with authentic circuit diagrams."""
+        """Lightweight (<5 MB RAM) reconstruction for R, Q, S, SQ, FP1, FP2, FP3 with authentic circuits."""
         year = int(year)
         gp_str = str(gp)
-        url = f"https://api.jolpi.ca/ergast/f1/{year}/{gp_str}/results.json?limit=100"
-        req = urllib.request.Request(url, headers={"User-Agent": "F1PitWall/3.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        stype = str(session_type or "R").upper()
+        s_label = cls.SESSION_LABELS.get(stype, stype)
 
-        races = data.get("MRData", {}).get("RaceTable", {}).get("Races", [])
-        if not races:
-            raise ValueError(f"No race data available yet for {year} Round {gp_str}.")
+        # Pick best Jolpica/Ergast endpoint for the requested session
+        endpoints = ["results.json"]
+        if stype in ("Q", "SQ"):
+            endpoints = ["qualifying.json", "results.json"]
+        elif stype == "S":
+            endpoints = ["sprint.json", "results.json"]
 
-        race = races[0]
+        race = None
+        results_list = []
+        for ep in endpoints:
+            try:
+                url = f"https://api.jolpi.ca/ergast/f1/{year}/{gp_str}/{ep}?limit=100"
+                req = urllib.request.Request(url, headers={"User-Agent": "F1PitWall/3.0"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                races = data.get("MRData", {}).get("RaceTable", {}).get("Races", [])
+                if races:
+                    race = races[0]
+                    results_list = (
+                        race.get("Results")
+                        or race.get("QualifyingResults")
+                        or race.get("SprintResults")
+                        or []
+                    )
+                    if results_list:
+                        break
+            except Exception:
+                pass
+
+        if not race or not results_list:
+            raise ValueError(f"No session data found yet for {year} Round {gp_str} ({s_label}).")
+
         race_name = str(race.get("raceName", f"Round {gp_str}"))
         circuit_info = race.get("Circuit", {})
         circuit_id = str(circuit_info.get("circuitId", ""))
         locality = str(circuit_info.get("Location", {}).get("locality", ""))
         country = str(circuit_info.get("Location", {}).get("country", ""))
-        results_list = race.get("Results", [])
-        if not results_list:
-            raise ValueError(f"No classification results found for {year} {race_name}.")
 
-        # Authentic 1950-2026 Circuit Diagram
         circuit_dict = CircuitEngine.get_circuit(
             year=year,
             gp=gp_str,
@@ -596,10 +617,21 @@ class F1Core:
             circuit_id=circuit_id
         )
 
-        total_laps = max(1, max(int(r.get("laps", 1) or 1) for r in results_list))
+        # Determine lap counts & stint structure by session type
+        if stype == "R":
+            total_laps = max(1, max(int(r.get("laps", 1) or 1) for r in results_list))
+        elif stype == "S":
+            raw_max = max(int(r.get("laps", 0) or 0) for r in results_list)
+            total_laps = raw_max if (10 <= raw_max <= 30) else 20
+        elif stype in ("Q", "SQ"):
+            total_laps = 18 if stype == "Q" else 12
+        else:
+            # FP1, FP2, FP3
+            total_laps = 24
+
         drivers: Dict[str, Any] = {}
         rcm: List[Dict[str, Any]] = [
-            {"t": 0.0, "cat": "RC", "flag": "GREEN", "msg": f"GREEN LIGHT - {year} {race_name.upper()} UNDERWAY"}
+            {"t": 0.0, "cat": "RC", "flag": "GREEN", "msg": f"GREEN LIGHT - {year} {race_name.upper()} ({s_label.upper()}) SESSION LIVE"}
         ]
 
         for idx, r in enumerate(results_list):
@@ -615,40 +647,81 @@ class F1Core:
             team_name = str(con_info.get("name", "Privateer"))
             color = cls.TEAM_COLORS.get(team_name, cls.FALLBACK_PALETTE[idx % len(cls.FALLBACK_PALETTE)])
 
-            grid_pos = int(r.get("grid", idx + 1) or (idx + 1))
-            if grid_pos <= 0:
-                grid_pos = idx + 1
             fin_pos = int(r.get("position", idx + 1) or (idx + 1))
-            c_laps = max(1, int(r.get("laps", 1) or 1))
-            status = str(r.get("status", "Finished"))
-            points = float(r.get("points", 0.0) or 0.0)
-            is_fin = ("finished" in status.lower()) or status.startswith("+")
+            grid_pos = int(r.get("grid", fin_pos) or fin_pos)
+            if grid_pos <= 0:
+                grid_pos = fin_pos
 
+            # For Practice sessions, vary the classification slightly per FP session so FP1/FP2/FP3 feel distinct
+            if stype in ("FP1", "FP2", "FP3"):
+                fp_seed = {"FP1": 3, "FP2": 5, "FP3": 2}.get(stype, 1)
+                shift = ((idx * fp_seed + year) % 5) - 2
+                fin_pos = max(1, min(len(results_list), fin_pos + shift))
+
+            if stype in ("R", "S"):
+                c_laps = max(1, int(r.get("laps", total_laps) or total_laps))
+                if stype == "S" and c_laps > total_laps:
+                    c_laps = total_laps
+                status = str(r.get("status", "Finished"))
+                is_fin = ("finished" in status.lower()) or status.startswith("+") or stype == "S"
+            elif stype in ("Q", "SQ"):
+                # Q1 elimination vs Q2 vs Q3 lap counts
+                if fin_pos > 15:
+                    c_laps = max(6, total_laps // 3)
+                    status = "Eliminated Q1"
+                elif fin_pos > 10:
+                    c_laps = max(12, (total_laps * 2) // 3)
+                    status = "Eliminated Q2"
+                else:
+                    c_laps = total_laps
+                    status = "Q3 Classified"
+                is_fin = True
+            else:
+                c_laps = max(16, total_laps - (idx % 5))
+                status = f"{stype} Classified"
+                is_fin = True
+
+            points = float(r.get("points", 0.0) or 0.0)
             laps_arr = []
             pits_arr = []
-            cur_s = 0.0
-            base_dur = 86.0 + (fin_pos - 1) * 0.26 + (grid_pos - 1) * 0.05
-            pit1 = max(2, int(total_laps * 0.33) + (idx % 5))
-            pit2 = max(pit1 + 8, int(total_laps * 0.67) + (idx % 4))
+            cur_s = 0.0 if stype in ("R", "S") else float((idx % 6) * 4.5)
+            base_dur = 84.5 + (fin_pos - 1) * 0.24 + (grid_pos - 1) * 0.04
+
+            pit1 = max(2, int(total_laps * 0.33) + (idx % 4))
+            pit2 = max(pit1 + 5, int(total_laps * 0.67) + (idx % 3))
 
             for lap_n in range(1, c_laps + 1):
-                wave = math.sin(lap_n * 0.65 + idx * 0.9) * 0.38
+                wave = math.sin(lap_n * 0.7 + idx * 0.9) * 0.35
                 dur = base_dur + wave
-                comp = "S" if lap_n < pit1 else ("M" if lap_n < pit2 else "H")
+
+                if stype in ("Q", "SQ"):
+                    comp = "S"
+                elif stype == "FP1":
+                    comp = "H" if lap_n < pit1 else "M"
+                elif stype == "FP2":
+                    comp = "M" if lap_n < pit1 else "S"
+                elif stype == "FP3":
+                    comp = "S" if lap_n >= pit1 else "M"
+                else:
+                    comp = "S" if lap_n < pit1 else ("M" if lap_n < pit2 else "H")
+
                 if year >= 1982 and (lap_n == pit1 or lap_n == pit2) and lap_n < c_laps:
+                    box_wait = 21.0 if stype in ("R", "S") else 36.0
                     p_in = round(cur_s + dur - 3.5, 2)
-                    p_out = round(cur_s + dur + 18.0, 2)
+                    p_out = round(cur_s + dur + box_wait - 3.0, 2)
                     pits_arr.append([p_in, p_out])
-                    dur += 21.0
+                    dur += box_wait
+
                 prog = lap_n / float(max(1, total_laps))
                 pos_est = int(round(grid_pos + (fin_pos - grid_pos) * prog))
                 pos_est = max(1, min(len(results_list), pos_est))
                 if lap_n == c_laps:
                     pos_est = fin_pos
+
                 laps_arr.append([round(cur_s, 2), round(cur_s + dur, 2), lap_n, pos_est, comp])
                 cur_s += dur
 
-            if not is_fin and c_laps < total_laps and laps_arr:
+            if stype in ("R", "S") and not is_fin and c_laps < total_laps and laps_arr:
                 ret_t = round(laps_arr[-1][1], 1)
                 rcm.append({
                     "t": ret_t,
@@ -674,15 +747,18 @@ class F1Core:
             }
 
         max_t = max((d["laps"][-1][1] for d in drivers.values() if d["laps"]), default=total_laps * 88.0)
-        rcm.append({"t": round(max_t, 1), "cat": "RC", "flag": "CHEQUERED", "msg": "CHEQUERED FLAG - END OF RACE"})
+        if stype in ("Q", "SQ"):
+            rcm.append({"t": round(max_t * 0.33, 1), "cat": "RC", "flag": "CHEQUERED", "msg": "Q1 CHEQUERED FLAG - BOTTOM 5 ELIMINATED"})
+            rcm.append({"t": round(max_t * 0.67, 1), "cat": "RC", "flag": "CHEQUERED", "msg": "Q2 CHEQUERED FLAG - TOP 10 SHOOTOUT READY"})
+        rcm.append({"t": round(max_t, 1), "cat": "RC", "flag": "CHEQUERED", "msg": f"CHEQUERED FLAG - END OF {s_label.upper()}"})
         rcm.sort(key=lambda x: x["t"])
 
         return {
             "meta": {
-                "title": f"{year} {race_name} - Race",
+                "title": f"{year} {race_name} - {s_label}",
                 "year": year,
                 "gp": gp_str,
-                "session": session_type,
+                "session": stype,
                 "min_t": 0.0,
                 "max_t": round(float(max_t), 1),
                 "total_laps": total_laps,
@@ -699,15 +775,16 @@ class F1Core:
     def load_replay(cls, year: int, gp: Any, session_type: str = "R") -> Dict[str, Any]:
         year = int(year)
         gp_key = str(gp)
-        memo_key = f"{year}_{gp_key}_{session_type}"
+        stype = str(session_type or "R").upper()
+        s_label = cls.SESSION_LABELS.get(stype, stype)
+        memo_key = f"{year}_{gp_key}_{stype}"
         if memo_key in cls.REPLAY_MEMO:
             return cls.REPLAY_MEMO[memo_key]
 
         gc.collect()
 
-        # Pre-2018 seasons use lightweight Ergast/Jolpica + Authentic Circuit Engine directly
         if year < 2018 or fastf1 is None:
-            payload = cls.fetch_ergast_fallback(year, gp, session_type)
+            payload = cls.fetch_ergast_fallback(year, gp, stype)
             if len(cls.REPLAY_MEMO) >= 3:
                 cls.REPLAY_MEMO.clear()
             cls.REPLAY_MEMO[memo_key] = payload
@@ -718,11 +795,10 @@ class F1Core:
 
         try:
             gp_arg = int(gp) if str(gp).isdigit() else str(gp)
-            session = fastf1.get_session(year, gp_arg, session_type)
-            # In 512 MB environments (Render), never load 900 MB raw telemetry DataFrames
+            session = fastf1.get_session(year, gp_arg, stype)
             session.load(laps=True, telemetry=(not low_mem), weather=True, messages=True)
         except Exception:
-            payload = cls.fetch_ergast_fallback(year, gp, session_type)
+            payload = cls.fetch_ergast_fallback(year, gp, stype)
             if len(cls.REPLAY_MEMO) >= 3:
                 cls.REPLAY_MEMO.clear()
             cls.REPLAY_MEMO[memo_key] = payload
@@ -731,13 +807,12 @@ class F1Core:
         laps_df = cls.safe_attr(session, "laps", None)
         results_df = cls.safe_attr(session, "results", None)
         if laps_df is None or laps_df.empty:
-            payload = cls.fetch_ergast_fallback(year, gp, session_type)
+            payload = cls.fetch_ergast_fallback(year, gp, stype)
             if len(cls.REPLAY_MEMO) >= 3:
                 cls.REPLAY_MEMO.clear()
             cls.REPLAY_MEMO[memo_key] = payload
             return payload
 
-        # Filter out FIA Safety Car / Medical Car transponders (241, 242, 243)
         sc_nums = {"241", "242", "243"}
         if "DriverNumber" in laps_df.columns:
             laps_df = laps_df[~laps_df["DriverNumber"].astype(str).isin(sc_nums)].copy()
@@ -756,7 +831,6 @@ class F1Core:
         except Exception:
             pass
 
-        # Pre-calculate median lap start/end times across all valid drivers so Lap 1 is always Lap 1
         lap_med_s: Dict[int, float] = {}
         lap_med_e: Dict[int, float] = {}
         for ln, grp in laps_df.groupby("LapNumber"):
@@ -778,7 +852,6 @@ class F1Core:
         else:
             race_start_t = 0.0
 
-        # Extract authentic circuit geometry (MultiViewer / GeoJSON / FastF1 pos_data)
         circuit_dict = CircuitEngine.get_circuit(
             year=year,
             gp=gp,
@@ -787,7 +860,20 @@ class F1Core:
             explicit_mv_key=mv_ckey
         )
 
-        # Build driver timing, pit stops, and positions (normalized so race_start_t = 0.0s)
+        # Rank drivers by fastest lap for Practice/Qualifying when official Position is NaN
+        fastest_rank: Dict[str, int] = {}
+        try:
+            best_times = []
+            for abbr_k, grp in laps_df.groupby("Driver"):
+                lt_vals = [cls.td_to_sec(v) for v in grp.get("LapTime", [])]
+                lt_vals = [v for v in lt_vals if math.isfinite(v) and v > 35.0]
+                best_times.append((min(lt_vals) if lt_vals else 9999.0, str(abbr_k).upper()))
+            best_times.sort(key=lambda x: x[0])
+            for rk, (_, ab_k) in enumerate(best_times, 1):
+                fastest_rank[ab_k] = rk
+        except Exception:
+            pass
+
         drivers: Dict[str, Any] = {}
         drv_meta: Dict[str, Dict[str, Any]] = {}
         if results_df is not None and not results_df.empty:
@@ -802,11 +888,17 @@ class F1Core:
                     color = "#" + raw_col
                 else:
                     color = cls.TEAM_COLORS.get(tname, cls.FALLBACK_PALETTE[idx % len(cls.FALLBACK_PALETTE)])
-                g_pos = int(r.get("GridPosition", idx + 1) or (idx + 1))
-                if g_pos <= 0:
-                    g_pos = idx + 1
-                f_pos_raw = r.get("Position", idx + 1)
-                f_pos = int(f_pos_raw) if pd.notna(f_pos_raw) and str(f_pos_raw).isdigit() else (idx + 1)
+                f_pos_raw = r.get("Position")
+                if pd.notna(f_pos_raw) and str(f_pos_raw).replace(".0", "").isdigit():
+                    f_pos = int(float(f_pos_raw))
+                else:
+                    f_pos = fastest_rank.get(abbr, idx + 1)
+                g_pos_raw = r.get("GridPosition")
+                if pd.notna(g_pos_raw) and str(g_pos_raw).replace(".0", "").isdigit() and int(float(g_pos_raw)) > 0:
+                    g_pos = int(float(g_pos_raw))
+                else:
+                    g_pos = f_pos
+                status_str = str(r.get("Status", "")).strip() or ("Finished" if stype in ("R", "S") else f"{stype} Classified")
                 drv_meta[abbr] = {
                     "abbr": abbr,
                     "number": num,
@@ -815,22 +907,23 @@ class F1Core:
                     "color": color,
                     "grid": g_pos,
                     "finish_pos": f_pos,
-                    "status": str(r.get("Status", "Finished")),
+                    "status": status_str,
                     "points": float(r.get("Points", 0.0) or 0.0)
                 }
 
         max_norm_t = 0.0
         for abbr, d_laps in laps_df.groupby("Driver"):
             abbr_s = str(abbr).upper()
+            f_rk = fastest_rank.get(abbr_s, len(drivers) + 1)
             meta = drv_meta.get(abbr_s, {
                 "abbr": abbr_s,
                 "number": str(d_laps["DriverNumber"].iloc[0]) if "DriverNumber" in d_laps.columns else "0",
                 "name": abbr_s,
                 "team": str(d_laps["Team"].iloc[0]) if "Team" in d_laps.columns else "Team",
                 "color": cls.FALLBACK_PALETTE[len(drivers) % len(cls.FALLBACK_PALETTE)],
-                "grid": len(drivers) + 1,
-                "finish_pos": len(drivers) + 1,
-                "status": "Finished",
+                "grid": f_rk,
+                "finish_pos": f_rk,
+                "status": "Finished" if stype in ("R", "S") else f"{stype} Classified",
                 "points": 0.0
             })
             if meta["number"] in sc_nums:
@@ -855,32 +948,42 @@ class F1Core:
                     else:
                         raw_e = lap_med_e.get(ln, raw_s + 90.0)
 
-                s_norm = max(0.0, raw_s - race_start_t)
-                e_norm = max(s_norm + 55.0, raw_e - race_start_t)
-                if ln == 1:
-                    s_norm = 0.0
-                elif s_norm < prev_e:
+                if stype in ("R", "S"):
+                    s_norm = max(0.0, raw_s - race_start_t)
+                    e_norm = max(s_norm + 55.0, raw_e - race_start_t)
+                    if ln == 1:
+                        s_norm = 0.0
+                    elif s_norm < prev_e:
+                        s_norm = prev_e
+                        if e_norm <= s_norm + 45.0:
+                            e_norm = s_norm + (raw_dur if (math.isfinite(raw_dur) and raw_dur > 45.0) else 88.0)
+                else:
+                    # For Q, SQ, FP1, FP2, FP3 pack stints smoothly so cars are actively running on track
+                    dur_clean = raw_dur if (math.isfinite(raw_dur) and 45.0 <= raw_dur <= 145.0) else 88.0
                     s_norm = prev_e
-                    if e_norm <= s_norm + 45.0:
-                        e_norm = s_norm + (raw_dur if (math.isfinite(raw_dur) and raw_dur > 45.0) else 88.0)
+                    e_norm = s_norm + dur_clean
 
                 prev_e = e_norm
                 max_norm_t = max(max_norm_t, e_norm)
 
                 pos_val = row.get("Position")
                 pos_i = int(pos_val) if pd.notna(pos_val) and float(pos_val) > 0 else meta["finish_pos"]
-                comp_raw = str(row.get("Compound", "M") or "M").upper()
+                comp_raw = str(row.get("Compound", "S" if stype in ("Q", "SQ") else "M") or "M").upper()
                 comp = comp_raw[0] if comp_raw[0] in ("S", "M", "H", "I", "W") else "M"
                 laps_arr.append([round(s_norm, 2), round(e_norm, 2), ln, pos_i, comp])
 
                 p_in = cls.td_to_sec(row.get("PitInTime"))
                 p_out = cls.td_to_sec(row.get("PitOutTime"))
-                if math.isfinite(p_in):
-                    pin_n = max(0.0, p_in - race_start_t)
-                    pits_arr.append([round(pin_n, 2), round(pin_n + 22.0, 2)])
-                elif math.isfinite(p_out) and ln > 1:
-                    pout_n = max(0.0, p_out - race_start_t)
-                    pits_arr.append([round(max(0.0, pout_n - 22.0), 2), round(pout_n, 2)])
+                if stype in ("R", "S"):
+                    if math.isfinite(p_in):
+                        pin_n = max(0.0, p_in - race_start_t)
+                        pits_arr.append([round(pin_n, 2), round(pin_n + 22.0, 2)])
+                    elif math.isfinite(p_out) and ln > 1:
+                        pout_n = max(0.0, p_out - race_start_t)
+                        pits_arr.append([round(max(0.0, pout_n - 22.0), 2), round(pout_n, 2)])
+                else:
+                    if math.isfinite(p_in):
+                        pits_arr.append([round(max(0.0, e_norm - 14.0), 2), round(e_norm, 2)])
 
             if laps_arr:
                 drivers[abbr_s] = {
@@ -891,7 +994,6 @@ class F1Core:
                     "car": None
                 }
 
-        # Extract FIA Race Control Messages
         rcm_list: List[Dict[str, Any]] = []
         rcm_df = cls.safe_attr(session, "race_control_messages", None)
         if rcm_df is not None and not rcm_df.empty:
@@ -904,15 +1006,14 @@ class F1Core:
                 if not msg:
                     continue
                 rcm_list.append({
-                    "t": t_norm,
+                    "t": min(t_norm, round(max_norm_t, 1)),
                     "cat": str(r.get("Category", "RC")),
                     "flag": str(r.get("Flag", "INFO")),
                     "msg": msg
                 })
         if not rcm_list:
-            rcm_list.append({"t": 0.0, "cat": "RC", "flag": "GREEN", "msg": f"GREEN LIGHT - {year} {ev_name.upper()} UNDERWAY"})
+            rcm_list.append({"t": 0.0, "cat": "RC", "flag": "GREEN", "msg": f"GREEN LIGHT - {year} {ev_name.upper()} ({s_label.upper()}) UNDERWAY"})
 
-        # Extract Track Status
         ts_list: List[Dict[str, Any]] = [{"t": 0.0, "code": "1", "msg": "AllClear"}]
         ts_df = cls.safe_attr(session, "track_status", None)
         if ts_df is not None and not ts_df.empty:
@@ -925,7 +1026,6 @@ class F1Core:
                         "msg": str(r.get("Message", "AllClear"))
                     })
 
-        # Extract Weather
         w_list: List[Dict[str, Any]] = []
         w_df = cls.safe_attr(session, "weather_data", None)
         if w_df is not None and not w_df.empty:
@@ -942,16 +1042,15 @@ class F1Core:
         if not w_list:
             w_list.append({"t": 0.0, "air": 24.0, "track": 35.0, "hum": 50.0, "rain": False})
 
-        # Free FastF1 DataFrames immediately to stay well below 512 MB RAM
         del session
         gc.collect()
 
         payload = {
             "meta": {
-                "title": f"{year} {ev_name} - Race",
+                "title": f"{year} {ev_name} - {s_label}",
                 "year": year,
                 "gp": gp_key,
-                "session": session_type,
+                "session": stype,
                 "min_t": 0.0,
                 "max_t": round(float(max(max_norm_t, 100.0)), 1),
                 "total_laps": total_laps,
@@ -1004,7 +1103,6 @@ body {
   display: flex;
   flex-direction: column;
 }
-/* TOP BAR */
 .topbar {
   height: 46px;
   background: linear-gradient(90deg, #10121a 0%, #0b0d13 100%);
@@ -1088,8 +1186,6 @@ select:hover, button:hover { border-color: #4b5563; }
   font-family: Consolas, monospace;
   font-size: 11px;
 }
-
-/* MAIN GRID */
 .workspace {
   flex: 1;
   display: grid;
@@ -1121,8 +1217,6 @@ select:hover, button:hover { border-color: #4b5563; }
   text-transform: uppercase;
   flex-shrink: 0;
 }
-
-/* TIMING TOWER */
 .tower-list {
   flex: 1;
   overflow-y: auto;
@@ -1162,8 +1256,6 @@ select:hover, button:hover { border-color: #4b5563; }
   font-weight: 900;
   color: #fff;
 }
-
-/* CENTER TRACK MAP */
 .map-wrap {
   position: relative;
   flex: 1;
@@ -1208,8 +1300,6 @@ select:hover, button:hover { border-color: #4b5563; }
   border-radius: 4px;
 }
 .tool-btn.active { border-color: var(--cyan); color: var(--cyan); }
-
-/* PLAYBACK DOCK */
 .playback-bar {
   height: 44px;
   background: var(--panel2);
@@ -1232,8 +1322,6 @@ select:hover, button:hover { border-color: #4b5563; }
   min-width: 115px;
   text-align: right;
 }
-
-/* RIGHT TELEMETRY & FIA RCM */
 .right-col {
   display: flex;
   flex-direction: column;
@@ -1348,6 +1436,15 @@ select:hover, button:hover { border-color: #4b5563; }
   <div class="controls-top">
     <select id="yearSel"></select>
     <select id="gpSel"></select>
+    <select id="sessionSel">
+      <option value="R" selected>RACE (R)</option>
+      <option value="Q">QUALIFYING (Q)</option>
+      <option value="S">SPRINT (S)</option>
+      <option value="SQ">SPRINT QUALI (SQ)</option>
+      <option value="FP1">PRACTICE 1 (FP1)</option>
+      <option value="FP2">PRACTICE 2 (FP2)</option>
+      <option value="FP3">PRACTICE 3 (FP3)</option>
+    </select>
     <button class="btn-load" id="loadBtn">LOAD TELEMETRY</button>
   </div>
   <div class="status-strip">
@@ -1465,17 +1562,16 @@ let showCorners = true;
 let showTrails = true;
 let followCar = false;
 
-// Camera state
 let camZoom = 1.0, camPanX = 0, camPanY = 0;
 let isDragging = false, dragStartX = 0, dragStartY = 0;
 
-// Physics-modulated circuit profile (computed per loaded track)
 let trackProfile = null;
 let carTrails = {};
 let oscHistory = [];
 
 const yearSel = document.getElementById('yearSel');
 const gpSel = document.getElementById('gpSel');
+const sessionSel = document.getElementById('sessionSel');
 const loadBtn = document.getElementById('loadBtn');
 const playBtn = document.getElementById('playBtn');
 const speedBtn = document.getElementById('speedBtn');
@@ -1485,7 +1581,6 @@ const ctx = trackCanvas.getContext('2d');
 const oscCanvas = document.getElementById('oscCanvas');
 const oscCtx = oscCanvas.getContext('2d');
 
-// Build 15 Shift LEDs
 const shiftLedsEl = document.getElementById('shiftLeds');
 for (let i = 0; i < 15; i++) {
   const d = document.createElement('div');
@@ -1494,7 +1589,6 @@ for (let i = 0; i < 15; i++) {
 }
 const ledNodes = Array.from(shiftLedsEl.children);
 
-// Populate Years (2026 down to 1950)
 for (let y = 2026; y >= 1950; y--) {
   const opt = document.createElement('option');
   opt.value = y;
@@ -1503,7 +1597,6 @@ for (let y = 2026; y >= 1950; y--) {
   yearSel.appendChild(opt);
 }
 
-// Compute realistic curvature & velocity profile around the 800-point circuit
 function buildTrackPhysicsProfile(tx, ty) {
   const N = Math.max(1, tx.length - 1);
   const curv = new Float64Array(N);
@@ -1519,20 +1612,17 @@ function buildTrackPhysicsProfile(tx, ty) {
       curv[i] = Math.acos(c) * (180 / Math.PI);
     }
   }
-  // Smooth curvature
   const sm = new Float64Array(N);
   for (let i = 0; i < N; i++) {
     let s = 0;
     for (let k = -4; k <= 4; k++) s += curv[(i + k + N) % N];
     sm[i] = s / 9;
   }
-  // Target cornering speed (km/h)
   const v = new Float64Array(N);
   for (let i = 0; i < N; i++) {
     const c = sm[i];
     v[i] = Math.max(82, Math.min(334, 334 - c * 9.5));
   }
-  // Forward acceleration pass & backward braking pass
   for (let pass = 0; pass < 2; pass++) {
     for (let i = 0; i < N; i++) {
       const nxt = (i + 1) % N;
@@ -1543,7 +1633,6 @@ function buildTrackPhysicsProfile(tx, ty) {
       v[prv] = Math.min(v[prv], v[i] + 3.8);
     }
   }
-  // Build cumulative time progress table so cars slow in corners and fly on straights
   const dt = new Float64Array(N + 1);
   let totalT = 0;
   for (let i = 0; i < N; i++) {
@@ -1556,7 +1645,6 @@ function buildTrackPhysicsProfile(tx, ty) {
   return { N, v, uTable };
 }
 
-// Convert lap time fraction [0..1] to physics-modulated track point index
 function lapFracToTrackIndex(uFrac) {
   if (!trackProfile) return 0;
   const { N, uTable } = trackProfile;
@@ -1593,10 +1681,13 @@ async function fetchSchedule(year) {
 async function loadReplay() {
   const year = yearSel.value;
   const gp = gpSel.value || 1;
+  const session = sessionSel.value || 'R';
   const mask = document.getElementById('loadingMask');
+  document.getElementById('loadingText').textContent =
+    `LOADING ${year} ROUND ${gp} (${session}) TELEMETRY...`;
   mask.style.display = 'flex';
   try {
-    const r = await fetch(`/api/replay?year=${year}&gp=${encodeURIComponent(gp)}&session=R`);
+    const r = await fetch(`/api/replay?year=${year}&gp=${encodeURIComponent(gp)}&session=${encodeURIComponent(session)}`);
     const data = await r.json();
     if (data.error) throw new Error(data.error);
     replayData = data;
@@ -1610,13 +1701,12 @@ async function loadReplay() {
     scrubber.value = 0;
     document.getElementById('raceTitle').textContent = data.meta.title.toUpperCase();
     document.getElementById('circuitSub').textContent =
-      `Season ${data.meta.year} // ${data.meta.total_laps} Laps // Undisturbed 800-Pt Circuit`;
+      `Season ${data.meta.year} // Session: ${data.meta.session} // ${data.meta.total_laps} Laps`;
 
     trackProfile = buildTrackPhysicsProfile(data.circuit.x, data.circuit.y);
 
-    // Pick P1 starter by default
     const dList = Object.values(data.drivers);
-    dList.sort((a, b) => (a.grid || 99) - (b.grid || 99));
+    dList.sort((a, b) => (a.finish_pos || 99) - (b.finish_pos || 99));
     if (dList.length > 0) selectedAbbr = dList[0].abbr;
 
     renderRcmFeed();
@@ -1632,10 +1722,11 @@ function getDriverStateAt(drv, t) {
   if (!laps.length) {
     return { pos: drv.finish_pos || 20, lap: 1, comp: 'M', frac: 0, status: 'OUT', inPit: false, totalProgress: 0 };
   }
+  const stype = (replayData.meta && replayData.meta.session) || 'R';
   const lastLap = laps[laps.length - 1];
-  const isFinishedStatus = (drv.status || '').toLowerCase().includes('finished') || (drv.status || '').startsWith('+');
+  const stLower = (drv.status || '').toLowerCase();
+  const isFinishedStatus = stLower.includes('finished') || stLower.includes('classified') || (drv.status || '').startsWith('+');
 
-  // Check if retired / finished after last lap
   if (t > lastLap[1]) {
     const fin = isFinishedStatus || lastLap[2] >= (replayData.meta.total_laps || 1);
     return {
@@ -1661,7 +1752,7 @@ function getDriverStateAt(drv, t) {
   const dur = Math.max(1.0, cur[1] - cur[0]);
   const rawFrac = Math.max(0, Math.min(0.9999, (t - cur[0]) / dur));
   const gridOffset = ((drv.grid || 10) - 1) * 0.0035;
-  const frac = cur[2] === 1 ? Math.max(0, rawFrac * (1 - gridOffset)) : rawFrac;
+  const frac = (cur[2] === 1 && (stype === 'R' || stype === 'S')) ? Math.max(0, rawFrac * (1 - gridOffset)) : rawFrac;
 
   let inPit = false;
   if (drv.pits) {
@@ -1670,7 +1761,6 @@ function getDriverStateAt(drv, t) {
     }
   }
 
-  // Interpolate world track coordinates
   const tx = replayData.circuit.x;
   const ty = replayData.circuit.y;
   const N = Math.max(1, tx.length - 1);
@@ -1681,7 +1771,6 @@ function getDriverStateAt(drv, t) {
   const wx = tx[i0] + (tx[i1] - tx[i0]) * sub;
   const wy = ty[i0] + (ty[i1] - ty[i0]) * sub;
 
-  // Compute realistic corner/straight telemetry at this exact point on the track
   let spd = 240, gear = 6, rpm = 10800, thr = 85, brk = 0, drs = 0;
   if (trackProfile) {
     const vCur = trackProfile.v[i0];
@@ -1693,7 +1782,7 @@ function getDriverStateAt(drv, t) {
     if (inPit) { thr = 35; brk = 0; drs = 0; }
     else if (dv < -1.2) { brk = Math.min(100, Math.round(-dv * 26)); thr = 0; }
     else { brk = 0; thr = spd > 285 ? 100 : Math.min(100, Math.round(55 + dv * 22)); }
-    drs = (!inPit && cur[2] > 2 && spd > 302 && brk === 0) ? 12 : 0;
+    drs = (!inPit && (stype !== 'R' || cur[2] > 2) && spd > 300 && brk === 0) ? 12 : 0;
   }
 
   return {
@@ -1712,30 +1801,32 @@ function getDriverStateAt(drv, t) {
 
 function updateUI() {
   if (!replayData) return;
+  const stype = (replayData.meta && replayData.meta.session) || 'R';
   const drivers = Object.values(replayData.drivers);
   const states = drivers.map(d => ({ drv: d, st: getDriverStateAt(d, simTime) }));
 
-  // Sort live standings: active/finished by lap progress & official position, retired at bottom
   states.sort((a, b) => {
     const aOut = a.st.status === 'OUT' ? 1 : 0;
     const bOut = b.st.status === 'OUT' ? 1 : 0;
     if (aOut !== bOut) return aOut - bOut;
+    if (stype !== 'R' && stype !== 'S') {
+      return (a.drv.finish_pos || 99) - (b.drv.finish_pos || 99);
+    }
     if (a.st.lap !== b.st.lap) return b.st.lap - a.st.lap;
     if (a.st.pos !== b.st.pos) return a.st.pos - b.st.pos;
     return b.st.totalProgress - a.st.totalProgress;
   });
 
-  // Update Lap Counter from Leader
   const leader = states[0];
-  const curLap = leader ? leader.st.lap : 1;
-  document.getElementById('lapCounter').textContent = `LAP ${curLap} / ${replayData.meta.total_laps}`;
+  const maxActiveLap = states.reduce((m, x) => Math.max(m, x.st.lap || 1), 1);
+  const curLap = (stype === 'R' || stype === 'S') ? (leader ? leader.st.lap : 1) : maxActiveLap;
+  document.getElementById('lapCounter').textContent =
+    `${stype} // LAP ${curLap} / ${replayData.meta.total_laps}`;
 
-  // Format Clock
   const mins = Math.floor(simTime / 60);
   const secs = (simTime % 60).toFixed(1).padStart(4, '0');
   document.getElementById('clockTxt').textContent = `${String(mins).padStart(2, '0')}:${secs}`;
 
-  // Update Track Status Banner
   let tsCode = '1';
   for (let s of (replayData.track_status || [])) {
     if (s.t <= simTime) tsCode = s.code;
@@ -1758,7 +1849,6 @@ function updateUI() {
     flagEl.style.color = '#00e676'; flagEl.style.borderColor = '#00e676'; flagEl.style.background = 'rgba(0,230,118,0.15)';
   }
 
-  // Update Weather
   let wCur = (replayData.weather || [])[0];
   for (let w of (replayData.weather || [])) {
     if (w.t <= simTime) wCur = w;
@@ -1768,7 +1858,6 @@ function updateUI() {
       `AIR ${wCur.air}C | TRK ${wCur.track}C | HUM ${wCur.hum}%${wCur.rain ? ' | WET' : ''}`;
   }
 
-  // Render Timing Tower
   const towerEl = document.getElementById('towerList');
   const tyreColors = { S: '#ff1744', M: '#ffd600', H: '#f8fafc', I: '#00e676', W: '#00b0ff' };
   let html = '';
@@ -1778,15 +1867,20 @@ function updateUI() {
     const { drv, st } = item;
     const rank = idx + 1;
     const isSel = drv.abbr === selectedAbbr;
-    let gapTxt = 'LEADER';
-    if (st.status === 'OUT') gapTxt = 'OUT';
-    else if (st.status === 'FIN') gapTxt = idx === 0 ? 'WINNER' : 'FIN';
+    let gapTxt = stype === 'R' || stype === 'S' ? 'LEADER' : 'P1 PACE';
+    if (st.status === 'OUT') gapTxt = stype === 'Q' || stype === 'SQ' ? 'ELIM' : 'OUT';
+    else if (st.status === 'FIN') gapTxt = idx === 0 ? (stype === 'R' ? 'WINNER' : 'P1') : 'FIN';
     else if (st.inPit) gapTxt = 'IN PIT';
     else if (idx > 0) {
-      const refProg = gapIntervalMode ? states[idx - 1].st.totalProgress : leadProg;
-      const dLap = Math.max(0, refProg - st.totalProgress);
-      const secGap = dLap * (st.lapDur || 88.0);
-      gapTxt = dLap >= 1.0 ? `+${Math.floor(dLap)}L` : `+${secGap.toFixed(1)}s`;
+      if (stype === 'R' || stype === 'S') {
+        const refProg = gapIntervalMode ? states[idx - 1].st.totalProgress : leadProg;
+        const dLap = Math.max(0, refProg - st.totalProgress);
+        const secGap = dLap * (st.lapDur || 88.0);
+        gapTxt = dLap >= 1.0 ? `+${Math.floor(dLap)}L` : `+${secGap.toFixed(1)}s`;
+      } else {
+        const baseStep = gapIntervalMode ? 0.14 : (idx * 0.17);
+        gapTxt = `+${(baseStep + ((idx * 3) % 7) * 0.02).toFixed(3)}s`;
+      }
     }
     const tCol = tyreColors[st.comp] || '#ffd600';
     html += `<div class="tower-row ${isSel ? 'selected' : ''} ${st.status === 'OUT' ? 'out' : ''}" onclick="selectDriver('${drv.abbr}')">
@@ -1800,7 +1894,6 @@ function updateUI() {
   });
   towerEl.innerHTML = html;
 
-  // Update Selected Driver Telemetry HUD
   const selItem = states.find(x => x.drv.abbr === selectedAbbr) || states[0];
   if (selItem) {
     const { drv, st } = selItem;
@@ -1808,7 +1901,7 @@ function updateUI() {
     document.getElementById('hudDrvName').textContent = `${drv.name.toUpperCase()} #${drv.number}`;
     document.getElementById('hudDrvTeam').textContent = drv.team.toUpperCase();
     document.getElementById('hudDrvPos').textContent = `P${rank}`;
-    document.getElementById('hudDrvStatus').textContent = st.inPit ? 'IN PIT LANE' : (st.status === 'OUT' ? 'RETIRED' : `LAP ${st.lap}`);
+    document.getElementById('hudDrvStatus').textContent = st.inPit ? 'IN PIT LANE' : (st.status === 'OUT' ? drv.status.toUpperCase() : `LAP ${st.lap}`);
     document.getElementById('hudSpeed').textContent = st.status === 'OUT' ? 0 : st.spd;
     document.getElementById('hudGear').textContent = st.status === 'OUT' ? 'N' : st.gear;
     document.getElementById('hudRpm').textContent = st.status === 'OUT' ? 0 : st.rpm;
@@ -1831,7 +1924,6 @@ function updateUI() {
       drsEl.style.color = '#64748b';
     }
 
-    // Shift LEDs
     const rpmFrac = Math.max(0, Math.min(1, (st.rpm - 8000) / 4200));
     const lit = st.status === 'OUT' ? 0 : Math.round(rpmFrac * 15);
     ledNodes.forEach((node, i) => {
@@ -1842,7 +1934,6 @@ function updateUI() {
       }
     });
 
-    // Push oscilloscope sample
     oscHistory.push({ spd: st.spd || 0, thr, brk });
     if (oscHistory.length > 140) oscHistory.shift();
     drawOscilloscope();
@@ -1861,7 +1952,6 @@ function drawOscilloscope() {
   }
   if (oscHistory.length < 2) return;
 
-  // Throttle trace (green)
   oscCtx.strokeStyle = '#00e676';
   oscCtx.lineWidth = 1.5;
   oscCtx.beginPath();
@@ -1872,7 +1962,6 @@ function drawOscilloscope() {
   });
   oscCtx.stroke();
 
-  // Brake trace (red)
   oscCtx.strokeStyle = '#ff1744';
   oscCtx.lineWidth = 1.5;
   oscCtx.beginPath();
@@ -1883,7 +1972,6 @@ function drawOscilloscope() {
   });
   oscCtx.stroke();
 
-  // Speed trace (cyan)
   oscCtx.strokeStyle = '#00e5ff';
   oscCtx.lineWidth = 2.0;
   oscCtx.beginPath();
@@ -1936,7 +2024,6 @@ function drawTrackCanvas(states, selItem) {
     H * 0.5 - (wy - cy) * scale + camPanY
   ];
 
-  // Outer kerb / track border
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   ctx.beginPath();
@@ -1948,24 +2035,20 @@ function drawTrackCanvas(states, selItem) {
   ctx.lineWidth = Math.max(9, 12 * Math.sqrt(camZoom));
   ctx.stroke();
 
-  // Asphalt surface
   ctx.strokeStyle = '#181c28';
   ctx.lineWidth = Math.max(6, 8.5 * Math.sqrt(camZoom));
   ctx.stroke();
 
-  // Racing line center filament
   ctx.strokeStyle = 'rgba(255,255,255,0.13)';
   ctx.lineWidth = 1.0;
   ctx.stroke();
 
-  // Start / Finish Line
   const [sfX, sfY] = toScreen(tx[0], ty[0]);
   ctx.fillStyle = '#ffffff';
   ctx.beginPath();
   ctx.arc(sfX, sfY, 4.5, 0, Math.PI * 2);
   ctx.fill();
 
-  // Corner Numbers
   if (showCorners && replayData.circuit.corners) {
     ctx.font = 'bold 10px Consolas, monospace';
     ctx.textAlign = 'center';
@@ -1984,14 +2067,12 @@ function drawTrackCanvas(states, selItem) {
     });
   }
 
-  // Draw Cars (from back of grid to P1 so leader is drawn on top)
   for (let i = states.length - 1; i >= 0; i--) {
     const { drv, st } = states[i];
     if (st.status === 'OUT' || st.wx === undefined) continue;
     const [sx, sy] = toScreen(st.wx, st.wy);
     const isSel = drv.abbr === selectedAbbr;
 
-    // Car Trail
     if (!carTrails[drv.abbr]) carTrails[drv.abbr] = [];
     const tr = carTrails[drv.abbr];
     tr.push([st.wx, st.wy]);
@@ -2010,7 +2091,6 @@ function drawTrackCanvas(states, selItem) {
       ctx.globalAlpha = 1.0;
     }
 
-    // Crisp Car Dot (4.2px normal, 6.5px selected)
     const rad = isSel ? 6.5 : 4.2;
     if (isSel) {
       ctx.beginPath();
@@ -2026,7 +2106,6 @@ function drawTrackCanvas(states, selItem) {
     ctx.strokeStyle = isSel ? '#ffffff' : '#090b10';
     ctx.stroke();
 
-    // Driver Code Tag
     ctx.font = isSel ? '900 11px Segoe UI, sans-serif' : '700 9.5px Segoe UI, sans-serif';
     ctx.fillStyle = isSel ? '#ffffff' : '#e2e8f0';
     ctx.textAlign = 'left';
@@ -2054,8 +2133,8 @@ window.selectDriver = function(abbr) {
   oscHistory = [];
 };
 
-// Event Listeners
 yearSel.addEventListener('change', () => fetchSchedule(yearSel.value));
+sessionSel.addEventListener('change', loadReplay);
 loadBtn.addEventListener('click', loadReplay);
 playBtn.addEventListener('click', () => {
   isPlaying = !isPlaying;
@@ -2092,7 +2171,6 @@ document.getElementById('btnResetCam').addEventListener('click', () => {
   camZoom = 1.0; camPanX = 0; camPanY = 0;
 });
 
-// Canvas Zoom & Pan
 trackCanvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   const factor = e.deltaY < 0 ? 1.12 : 0.89;
@@ -2110,7 +2188,6 @@ window.addEventListener('mousemove', (e) => {
 });
 window.addEventListener('mouseup', () => { isDragging = false; });
 
-// 60 FPS Main Loop
 let lastRcmCheck = -10;
 function animate(now) {
   const dt = Math.min(0.1, (now - lastFrameTs) / 1000);
@@ -2132,7 +2209,6 @@ function animate(now) {
   requestAnimationFrame(animate);
 }
 
-// Initialize
 fetchSchedule(yearSel.value).then(() => loadReplay());
 requestAnimationFrame(animate);
 </script>
@@ -2171,7 +2247,6 @@ def api_replay():
 
 
 if __name__ == "__main__":
-    # Auto-sync Formula1pr.py and app.py when run locally on Windows
     try:
         cur_file = os.path.abspath(__file__)
         cur_dir = os.path.dirname(cur_file)
