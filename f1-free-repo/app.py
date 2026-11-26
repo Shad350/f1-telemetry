@@ -2212,6 +2212,226 @@ function animate(now) {
 fetchSchedule(yearSel.value).then(() => loadReplay());
 requestAnimationFrame(animate);
 </script>
+<!-- ================= FUTURE RACE DATES + LIVE OPENF1 STREAM SNIPPET ================= -->
+<style>
+.future-card {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(14, 16, 23, 0.96);
+  border: 1px solid #2d3348;
+  border-top: 3px solid #e10600;
+  border-radius: 6px;
+  padding: 20px 26px;
+  width: 420px;
+  max-width: 92%;
+  text-align: center;
+  z-index: 50;
+  display: none;
+  box-shadow: 0 18px 45px rgba(0,0,0,0.75);
+}
+.future-badge {
+  display: inline-block;
+  background: rgba(225, 6, 0, 0.18);
+  color: #ff4d4d;
+  border: 1px solid #e10600;
+  font-size: 10px;
+  font-weight: 900;
+  padding: 3px 10px;
+  border-radius: 3px;
+  letter-spacing: 1.2px;
+  margin-bottom: 10px;
+}
+.future-title { font-size: 17px; font-weight: 900; color: #fff; letter-spacing: 0.5px; }
+.future-loc { font-size: 12px; color: #8b95a5; margin: 4px 0 14px; }
+.future-countdown {
+  font-family: Consolas, monospace;
+  font-size: 20px;
+  font-weight: 900;
+  color: #00e5ff;
+  background: #090b10;
+  border: 1px solid #232738;
+  padding: 8px;
+  border-radius: 4px;
+  margin-bottom: 14px;
+  letter-spacing: 1px;
+}
+.future-sched {
+  text-align: left;
+  font-size: 11px;
+  font-family: Consolas, monospace;
+  background: #121521;
+  border: 1px solid #232738;
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+.future-sched div {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.future-sched div:last-child { border-bottom: none; color: #00e676; font-weight: 900; }
+.btn-live-stream {
+  background: #141722;
+  border: 1px solid #00e676;
+  color: #00e676;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+  letter-spacing: 0.6px;
+}
+.btn-live-stream.active { background: #e10600; border-color: #e10600; color: #fff; }
+</style>
+
+<div class="future-card" id="futureRaceCard">
+  <div class="future-badge">UPCOMING GRAND PRIX // NOT YET RACED</div>
+  <div class="future-title" id="futTitle">2026 GRAND PRIX</div>
+  <div class="future-loc" id="futLoc">Scheduled FIA World Championship Event</div>
+  <div class="future-countdown" id="futCountdown">--d : --h : --m : --s</div>
+  <div class="future-sched" id="futSched"></div>
+  <button onclick="document.getElementById('futureRaceCard').style.display='none'" style="background:#e10600;border:none;color:#fff;padding:6px 16px;border-radius:4px;font-weight:900;">DISMISS</button>
+</div>
+
+<script>
+(function() {
+  let scheduleDates = {};
+  let countdownTimer = null;
+  let liveTimer = null;
+
+  // Move card inside map-wrap and add LIVE button to top bar
+  const mapWrap = document.querySelector('.map-wrap');
+  const fCard = document.getElementById('futureRaceCard');
+  if (mapWrap && fCard) mapWrap.appendChild(fCard);
+
+  const topCtrl = document.querySelector('.controls-top');
+  const liveBtn = document.createElement('button');
+  liveBtn.className = 'btn-live-stream';
+  liveBtn.textContent = 'LIVE SESSION';
+  topCtrl.appendChild(liveBtn);
+
+  // Capture race dates whenever /api/schedule loads
+  const origFetch = window.fetch;
+  window.fetch = async function(url, opts) {
+    const res = await origFetch(url, opts);
+    if (typeof url === 'string' && url.includes('/api/schedule')) {
+      res.clone().json().then(list => {
+        scheduleDates = {};
+        (list || []).forEach(ev => { scheduleDates[String(ev.round)] = ev; });
+      }).catch(() => {});
+    }
+    if (typeof url === 'string' && url.includes('/api/replay')) {
+      fCard.style.display = 'none';
+    }
+    return res;
+  };
+
+  // Replace generic alert with the Future Race Schedule & Countdown Card
+  const origAlert = window.alert;
+  window.alert = function(msg) {
+    if (String(msg).includes('No session data') || String(msg).includes('No race data')) {
+      showFutureRaceCard();
+    } else {
+      origAlert(msg);
+    }
+  };
+
+  function addDays(dateStr, offset) {
+    const d = new Date(dateStr + 'T14:00:00Z');
+    if (isNaN(d)) return 'TBA';
+    d.setUTCDate(d.getUTCDate() + offset);
+    return d.toUTCString().slice(0, 16);
+  }
+
+  function showFutureRaceCard() {
+    const yr = document.getElementById('yearSel').value;
+    const rnd = document.getElementById('gpSel').value;
+    const ev = scheduleDates[String(rnd)] || { name: `Round ${rnd} Grand Prix`, date: `${yr}-11-29`, location: 'Circuit', country: '' };
+    document.getElementById('futTitle').textContent = `${yr} ${ev.name.toUpperCase()}`;
+    document.getElementById('futLoc').textContent = `${ev.location || ''} ${ev.country ? '// ' + ev.country.toUpperCase() : ''}`;
+
+    const fri = addDays(ev.date, -2);
+    const sat = addDays(ev.date, -1);
+    const sun = addDays(ev.date, 0);
+    document.getElementById('futSched').innerHTML = `
+      <div><span>FRIDAY (FP1 / SQ)</span><span>${fri}</span></div>
+      <div><span>SATURDAY (FP2 / SPRINT / QUALI)</span><span>${sat}</span></div>
+      <div><span>SUNDAY (GRAND PRIX RACE)</span><span>${sun}</span></div>
+    `;
+    fCard.style.display = 'block';
+
+    if (countdownTimer) clearInterval(countdownTimer);
+    const targetMs = new Date(ev.date + 'T14:00:00Z').getTime();
+    const tick = () => {
+      const diff = targetMs - Date.now();
+      if (diff <= 0 || isNaN(diff)) {
+        document.getElementById('futCountdown').textContent = 'RACE WEEKEND ACTIVE';
+        return;
+      }
+      const d = Math.floor(diff / 86400000);
+      const h = Math.floor((diff % 86400000) / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      document.getElementById('futCountdown').textContent = `${d}d : ${h}h : ${m}m : ${s}s`;
+    };
+    tick();
+    countdownTimer = setInterval(tick, 1000);
+  }
+
+  // LIVE OPENF1 POLLING FOR FRIDAY 7PM-8PM LIVE TESTING
+  async function pollOpenF1Live() {
+    try {
+      const [sRes, dRes, pRes, rRes] = await Promise.all([
+        origFetch('https://api.openf1.org/v1/sessions?session_key=latest').then(r => r.json()),
+        origFetch('https://api.openf1.org/v1/drivers?session_key=latest').then(r => r.json()),
+        origFetch('https://api.openf1.org/v1/position?session_key=latest').then(r => r.json()),
+        origFetch('https://api.openf1.org/v1/race_control?session_key=latest').then(r => r.json())
+      ]);
+      const sess = (sRes || [])[0];
+      if (!sess) return;
+      document.getElementById('raceTitle').textContent = `LIVE // ${sess.year} ${sess.country_name.toUpperCase()} GP - ${sess.session_name.toUpperCase()}`;
+
+      const latestPos = {};
+      (pRes || []).forEach(p => { latestPos[p.driver_number] = p.position; });
+
+      if (window.replayData && dRes && dRes.length) {
+        dRes.forEach((d, idx) => {
+          const abbr = (d.name_acronym || ('D' + idx)).toUpperCase();
+          const pos = latestPos[d.driver_number] || (idx + 1);
+          if (replayData.drivers[abbr]) {
+            replayData.drivers[abbr].finish_pos = pos;
+            replayData.drivers[abbr].laps.forEach(l => { l[3] = pos; });
+          }
+        });
+      }
+      if (window.replayData && rRes && rRes.length) {
+        replayData.rcm = rRes.slice(-20).map((m, i) => ({
+          t: i * 10, cat: 'LIVE', flag: m.flag || 'INFO', msg: m.message || ''
+        }));
+        if (typeof renderRcmFeed === 'function') renderRcmFeed();
+      }
+    } catch (e) {}
+  }
+
+  liveBtn.addEventListener('click', () => {
+    if (liveTimer) {
+      clearInterval(liveTimer);
+      liveTimer = null;
+      liveBtn.classList.remove('active');
+      liveBtn.textContent = 'LIVE SESSION';
+    } else {
+      liveBtn.classList.add('active');
+      liveBtn.textContent = 'LIVE ON (5s)';
+      fCard.style.display = 'none';
+      pollOpenF1Live();
+      liveTimer = setInterval(pollOpenF1Live, 5000);
+    }
+  });
+})();
+</script>
 </body>
 </html>
 """
