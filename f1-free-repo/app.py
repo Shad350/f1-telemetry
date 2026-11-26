@@ -2432,6 +2432,252 @@ requestAnimationFrame(animate);
   });
 })();
 </script>
+<!-- === MOBILE RESPONSIVE & TOUCH GESTURES ADD-ON === -->
+<style>
+  .mob-tab-bar {
+    display: none;
+    height: 38px;
+    background: #0b0b10;
+    border-top: 1px solid #23232f;
+    grid-template-columns: 1fr 1fr 1fr;
+    z-index: 40;
+    flex-shrink: 0;
+  }
+  .mob-tab-btn {
+    background: transparent;
+    border: none;
+    border-right: 1px solid #1a1a24;
+    color: #8b8b9e;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    cursor: pointer;
+    transition: 0.15s;
+  }
+  .mob-tab-btn:last-child { border-right: none; }
+  .mob-tab-btn.active {
+    color: #ffffff;
+    background: rgba(225, 6, 0, 0.16);
+    box-shadow: inset 0 -3px 0 #e10600;
+  }
+
+  @media (max-width: 960px) {
+    body {
+      height: 100dvh;
+      overflow: hidden;
+    }
+    .header {
+      height: auto;
+      padding: 6px 8px;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+    }
+    .brand {
+      justify-content: space-between;
+    }
+    .brand-title { font-size: 12px; }
+    .brand-sub { font-size: 8px; }
+    .controls-top {
+      display: flex;
+      overflow-x: auto;
+      gap: 5px;
+      padding-bottom: 2px;
+      scrollbar-width: none;
+    }
+    .controls-top::-webkit-scrollbar { display: none; }
+    select, .btn {
+      height: 30px;
+      padding: 0 8px;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+    #gpSel { max-width: 135px; }
+    #sessionSel { max-width: 115px; }
+
+    .workspace {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .map-viewport {
+      order: 1;
+      flex: 0 0 43%;
+      min-height: 190px;
+      width: 100%;
+    }
+    .tower {
+      order: 2;
+      flex: 1;
+      width: 100%;
+      min-height: 0;
+      border-right: none;
+      border-top: 1px solid #23232f;
+    }
+    .telem-panel {
+      order: 3;
+      flex: 1;
+      width: 100%;
+      min-height: 0;
+      border-left: none;
+      border-top: 1px solid #23232f;
+      overflow-y: auto;
+    }
+
+    body.mob-mode-tower .telem-panel { display: none !important; }
+    body.mob-mode-telem .tower { display: none !important; }
+    body.mob-mode-map .tower,
+    body.mob-mode-map .telem-panel { display: none !important; }
+    body.mob-mode-map .map-viewport { flex: 1 1 100%; }
+
+    .hud-top-left {
+      top: 8px;
+      left: 8px;
+      padding: 6px 10px;
+      border-radius: 6px;
+    }
+    .lap-counter { font-size: 15px; }
+    .session-badge { font-size: 9px; margin-top: 1px; }
+    .weather-strip {
+      top: 8px;
+      right: 8px;
+      padding: 4px 8px;
+      gap: 8px;
+      font-size: 9px;
+    }
+    .weather-val { font-size: 10px; }
+    .map-toolbar {
+      bottom: 8px;
+      right: 8px;
+      gap: 4px;
+    }
+    .tool-btn {
+      padding: 5px 8px;
+      font-size: 9px;
+    }
+
+    .scope-container {
+      min-height: 150px;
+    }
+    .mob-tab-bar {
+      display: grid;
+    }
+    .timeline-bar {
+      height: 44px;
+      padding: 0 8px;
+      gap: 6px;
+    }
+    .time-readout {
+      font-size: 10px;
+      min-width: 82px;
+    }
+    .scrubber::-webkit-slider-thumb {
+      width: 20px;
+      height: 20px;
+    }
+    #futureRaceCard {
+      width: 92% !important;
+      padding: 18px 14px !important;
+    }
+  }
+</style>
+
+<div class="mob-tab-bar" id="mobTabBar">
+  <button class="mob-tab-btn active" onclick="setMobMode('tower', this)">TIMING TOWER</button>
+  <button class="mob-tab-btn" onclick="setMobMode('telem', this)">TELEMETRY HUD</button>
+  <button class="mob-tab-btn" onclick="setMobMode('map', this)">FULL CIRCUIT</button>
+</div>
+
+<script>
+(function(){
+  if (!document.querySelector('meta[name="viewport"]')) {
+    const meta = document.createElement('meta');
+    meta.name = 'viewport';
+    meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+    document.head.appendChild(meta);
+  }
+
+  document.body.classList.add('mob-mode-tower');
+
+  const tabBar = document.getElementById('mobTabBar');
+  const timeline = document.querySelector('.timeline-bar');
+  if (tabBar && timeline && timeline.parentNode) {
+    timeline.parentNode.insertBefore(tabBar, timeline);
+  }
+
+  window.setMobMode = function(mode, btn) {
+    document.body.classList.remove('mob-mode-tower', 'mob-mode-telem', 'mob-mode-map');
+    document.body.classList.add('mob-mode-' + mode);
+    document.querySelectorAll('.mob-tab-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    setTimeout(() => {
+      if (typeof resizeCanvas === 'function') resizeCanvas();
+    }, 50);
+  };
+
+  window.addEventListener('orientationchange', () => {
+    setTimeout(() => {
+      if (typeof resizeCanvas === 'function') resizeCanvas();
+    }, 150);
+  });
+
+  const canvas = document.getElementById('mapCanvas');
+  if (canvas) {
+    let touchStartDist = 0;
+    let initialZoom = 1;
+    let touchMoved = false;
+
+    canvas.addEventListener('touchstart', function(e) {
+      if (e.touches.length === 1) {
+        touchMoved = false;
+        cam.dragging = true;
+        cam.lx = e.touches[0].clientX;
+        cam.ly = e.touches[0].clientY;
+      } else if (e.touches.length === 2) {
+        cam.dragging = false;
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        touchStartDist = Math.hypot(dx, dy);
+        initialZoom = cam.zoom;
+      }
+    }, { passive: true });
+
+    canvas.addEventListener('touchmove', function(e) {
+      e.preventDefault();
+      if (e.touches.length === 1 && cam.dragging) {
+        const dx = e.touches[0].clientX - cam.lx;
+        const dy = e.touches[0].clientY - cam.ly;
+        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) touchMoved = true;
+        cam.x += dx;
+        cam.y += dy;
+        cam.lx = e.touches[0].clientX;
+        cam.ly = e.touches[0].clientY;
+      } else if (e.touches.length === 2 && touchStartDist > 0) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.hypot(dx, dy);
+        const ratio = dist / touchStartDist;
+        cam.zoom = Math.max(0.4, Math.min(8.0, initialZoom * ratio));
+      }
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', function(e) {
+      cam.dragging = false;
+      if (!touchMoved && e.changedTouches.length === 1) {
+        const t = e.changedTouches[0];
+        const downEvt = new MouseEvent('mousedown', { clientX: t.clientX, clientY: t.clientY });
+        const upEvt = new MouseEvent('mouseup', { clientX: t.clientX, clientY: t.clientY });
+        canvas.dispatchEvent(downEvt);
+        canvas.dispatchEvent(upEvt);
+      }
+    }, { passive: true });
+  }
+})();
+</script>
+<!-- === END MOBILE RESPONSIVE ADD-ON === -->
 </body>
 </html>
 """
